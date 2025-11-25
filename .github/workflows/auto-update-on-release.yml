@@ -1,0 +1,110 @@
+name: Auto Update on New Release
+
+on:
+  schedule:
+    # Check for new releases daily at midnight UTC
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Get latest release from source repo
+        id: latest_release
+        run: |
+          LATEST=$(curl -s https://api.github.com/repos/delivery-station/ds/releases/latest | jq -r '.tag_name')
+          echo "latest_version=$LATEST" >> $GITHUB_OUTPUT
+          echo "Latest release: $LATEST"
+      
+      - name: Get current formula version
+        id: current_version
+        run: |
+          CURRENT=$(grep 'version "' Formula/delivery-station.rb | head -1 | sed 's/.*version "\(.*\)".*/\1/')
+          echo "current_version=$CURRENT" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT"
+      
+      - name: Check if update needed
+        id: check_update
+        run: |
+          LATEST="${{ steps.latest_release.outputs.latest_version }}"
+          CURRENT="${{ steps.current_version.outputs.current_version }}"
+          
+          # Remove 'v' prefix for comparison
+          LATEST_CLEAN="${LATEST#v}"
+          
+          if [ "$LATEST_CLEAN" != "$CURRENT" ]; then
+            echo "Update needed: $CURRENT -> $LATEST_CLEAN"
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "new_version=$LATEST_CLEAN" >> $GITHUB_OUTPUT
+          else
+            echo "No update needed, already at $CURRENT"
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Download checksums
+        if: steps.check_update.outputs.needs_update == 'true'
+        run: |
+          VERSION="${{ steps.check_update.outputs.new_version }}"
+          curl -sL "https://github.com/delivery-station/ds/releases/download/v${VERSION}/checksums.txt" -o checksums.txt
+          cat checksums.txt
+          
+      - name: Extract checksums
+        if: steps.check_update.outputs.needs_update == 'true'
+        id: checksums
+        run: |
+          echo "darwin_arm64=$(grep 'ds-darwin-arm64.tar.gz' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "darwin_amd64=$(grep 'ds-darwin-amd64.tar.gz' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "linux_arm=$(grep 'ds-linux-arm.tar.gz' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "linux_amd64=$(grep 'ds-linux-amd64.tar.gz' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
+      
+      - name: Update formula
+        if: steps.check_update.outputs.needs_update == 'true'
+        run: |
+          VERSION="${{ steps.check_update.outputs.new_version }}"
+          
+          # Create a Ruby script to update the formula properly
+          cat > update_formula.rb << 'EOF'
+          version = ENV['VERSION']
+          darwin_arm64 = ENV['DARWIN_ARM64']
+          darwin_amd64 = ENV['DARWIN_AMD64']
+          linux_arm = ENV['LINUX_ARM']
+          linux_amd64 = ENV['LINUX_AMD64']
+          
+          content = File.read('Formula/delivery-station.rb')
+          
+          # Update version
+          content.gsub!(/version ".*"/, "version \"#{version}\"")
+          
+          # Update checksums in order they appear
+          checksums = [darwin_arm64, darwin_amd64, linux_arm, linux_amd64]
+          checksums.each do |checksum|
+            content.sub!(/sha256 "[a-f0-9]{64}"/, "sha256 \"#{checksum}\"")
+          end
+          
+          File.write('Formula/delivery-station.rb', content)
+          EOF
+          
+          VERSION="$VERSION" \
+          DARWIN_ARM64="${{ steps.checksums.outputs.darwin_arm64 }}" \
+          DARWIN_AMD64="${{ steps.checksums.outputs.darwin_amd64 }}" \
+          LINUX_ARM="${{ steps.checksums.outputs.linux_arm }}" \
+          LINUX_AMD64="${{ steps.checksums.outputs.linux_amd64 }}" \
+          ruby update_formula.rb
+          
+          rm update_formula.rb
+      
+      - name: Commit and push changes
+        if: steps.check_update.outputs.needs_update == 'true'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/delivery-station.rb
+          git commit -m "chore: auto-update formula to v${{ steps.check_update.outputs.new_version }}"
+          git push
