@@ -1,13 +1,13 @@
 class DeliveryStation < Formula
   desc "Delivery Station binary executable"
   homepage "https://github.com/delivery-station/ds"
-  version "1.0.0"
+  version "1.1.0"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/delivery-station/ds/releases/download/v#{version}/ds-darwin-arm64.tar.gz"
-      sha256 "5c6f3fbd74f359f99b2d62fa6ef1d110f61b67a3db00aedbfc0ccbdd4d2a1e25"
+      sha256 "5472ea4694c6f9c6ee4323a547f298e7b224cae136f879757f3f099fe30a0680"
     end
 
     on_intel do
