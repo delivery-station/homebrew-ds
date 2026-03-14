@@ -1,7 +1,7 @@
 class DeliveryStation < Formula
   desc "Delivery Station binary executable"
   homepage "https://github.com/delivery-station/ds"
-  version "1.6.1"
+  version "null"
   license "MIT"
 
   on_macos do
